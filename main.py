@@ -1,75 +1,88 @@
 import logging
-import os
-
+from aiogram import Bot, Dispatcher, executor, types
 from dotenv import load_dotenv
+import os
+import sys
+import openai
 
-from openai_helper import OpenAIHelper
-from telegram_bot import ChatGPT3TelegramBot
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 
-def main():
-    # Read .env file
-    load_dotenv()
+class Reference:
+    '''
+    A class to store previously response from the chatGPT APi
+    '''
+    def __init__(self) -> None:
+        self.response = ""
 
-    # Setup logging
-    logging.basicConfig(
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        level=logging.INFO
+def clear_past():
+    """
+    A function to clear the previous conversation and context.
+    """
+    reference.response = ""
+
+reference=Reference()
+model_name = "gpt-3.5-turbo"
+
+
+
+# Initialize bot and dispatcher
+bot = Bot(token= TELEGRAM_BOT_TOKEN)
+dp = Dispatcher(bot)
+
+
+
+@dp.message_handler(commands=['start'])
+async def welcome(message: types.Message):
+    """
+    This handler receives messages with `/start` command
+    """
+    await message.reply(f"Hi\nI am here to help you.\nCreated by Asit")
+
+
+@dp.message_handler(commands=['help'])
+async def helper(message: types.Message):
+    """
+    This handler receives messages with `/start` command
+    """
+    help_command = """
+    Hi There, I'm ChatBot created by Asit. please follow these commands -
+    /start - to start the conversation.
+    /clear - to clear the past conversation and context.
+    /help - to get this help menu.
+
+    I hope this helps. :)
+"""
+    await message.reply(help_command)
+
+
+@dp.message_handler(commands=['clear'])
+async def clear(message: types.Message):
+    """
+    This handler to clear the previous conversation and context.
+    """
+    clear_past()
+    await message.reply(f"I've cleared the past conversation and context")
+
+
+@dp.message_handler()
+async def chatGPT(message: types.Message):
+    """
+    This handler to process the user's input and generate a response using the chatGPT API.
+    """
+    print(f">>> USER : \n\t{message.text}")
+    response = openai.chat.completions.create(
+        model = model_name,
+        messages = [
+            {"role": "assistant", "content":f"you are a romantic boy (the response most be human mostly like a indian boy) flirt with the user in her each and every message: {reference.response} "},
+            {"role": "user","content":message.text}
+        ]
     )
+    reference.response = response.choices[0].message.content
+    print(f">>> ChatGPT: \n\t{reference.response}")
+    await bot.send_message(chat_id=message.chat.id, text=reference.response)
 
-    # Check if the required environment variables are set
-    required_values = ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY']
-    missing_values = [value for value in required_values if os.environ.get(value) is None]
-    if len(missing_values) > 0:
-        logging.error(f'The following environment values are missing in your .env: {", ".join(missing_values)}')
-        exit(1)
-
-    # Setup configurations
-    openai_config = {
-        'api_key': os.environ['OPENAI_API_KEY'],
-        'show_usage': os.environ.get('SHOW_USAGE', 'false').lower() == 'true',
-        'proxy': os.environ.get('PROXY', None),
-        'max_history_size': int(os.environ.get('MAX_HISTORY_SIZE', 10)),
-
-        # 'gpt-3.5-turbo' or 'gpt-3.5-turbo-0301'
-        'model': 'gpt-3.5-turbo',
-
-        # A system message that sets the tone and controls the behavior of the assistant.
-        'assistant_prompt': 'You are a helpful assistant.',
-
-        # Number between 0 and 2. Higher values like 0.8 will make the output more random,
-        # while lower values like 0.2 will make it more focused and deterministic.
-        'temperature': 1,
-
-        # How many chat completion choices to generate for each input message.
-        'n_choices': 1,
-
-        # The maximum number of tokens allowed for the generated answer
-        'max_tokens': 1200,
-
-        # Number between -2.0 and 2.0. Positive values penalize new tokens based on whether
-        # they appear in the text so far, increasing the model's likelihood to talk about new topics.
-        'presence_penalty': 0,
-
-        # Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing
-        # frequency in the text so far, decreasing the model's likelihood to repeat the same line verbatim.
-        'frequency_penalty': 0,
-
-        # The DALL·E generated image size
-        'image_size': '512x512'
-    }
-
-    telegram_config = {
-        'token': os.environ['TELEGRAM_BOT_TOKEN'],
-        'allowed_user_ids': os.environ.get('ALLOWED_TELEGRAM_USER_IDS', '*'),
-        'proxy': os.environ.get('PROXY', None)
-    }
-
-    # Setup and run ChatGPT and Telegram bot
-    openai_helper = OpenAIHelper(config=openai_config)
-    telegram_bot = ChatGPT3TelegramBot(config=telegram_config, openai=openai_helper)
-    telegram_bot.run()
-
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)
