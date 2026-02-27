@@ -1,5 +1,5 @@
 import logging
-from aiogram import Bot, Dispatcher, executor, types
+from aiogram import Bot, Dispatcher, types
 from dotenv import load_dotenv
 import os
 import sys
@@ -84,5 +84,8 @@ async def chatGPT(message: types.Message):
     print(f">>> ChatGPT: \n\t{reference.response}")
     await bot.send_message(chat_id=message.chat.id, text=reference.response)
 
-if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == '__main__':
+    asyncio.run(main())
