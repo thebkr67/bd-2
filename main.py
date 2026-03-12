@@ -10,9 +10,24 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-# Можно задать токен через переменную окружения BOT_TOKEN
-# или вписать его прямо в строку ниже.
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip() or "PASTE_YOUR_BOT_TOKEN_HERE"
+def get_bot_token() -> str:
+    """
+    Ищем токен в нескольких популярных переменных окружения.
+    Это удобно для Render / Railway / Docker / панели хостинга.
+    """
+    possible_names = [
+        "BOT_TOKEN",
+        "TELEGRAM_BOT_TOKEN",
+        "TOKEN",
+        "TG_BOT_TOKEN",
+    ]
+
+    for name in possible_names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+
+    return ""
 
 async def handle_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
@@ -24,25 +39,35 @@ async def handle_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if message.text.strip() != "+":
         return
 
-    # Только комментарии к постам канала:
-    # у комментария есть reply_to_message, а у самого поста есть sender_chat
+    # Только комментарии к постам канала
     reply_to = message.reply_to_message
     if reply_to and reply_to.sender_chat:
         await message.reply_text("принято")
 
-def validate_token(token: str) -> None:
-    if not token or token == "PASTE_YOUR_BOT_TOKEN_HERE":
+def main() -> None:
+    token = get_bot_token()
+
+    if not token:
         print(
-            "Ошибка: не указан токен бота.\n"
-            "Вставьте токен в переменную BOT_TOKEN в файле main.py\n"
-            "или задайте переменную окружения BOT_TOKEN."
+            "ОШИБКА: токен бота не найден.\n\n"
+            "Добавьте переменную окружения с одним из названий:\n"
+            "BOT_TOKEN\n"
+            "TELEGRAM_BOT_TOKEN\n"
+            "TOKEN\n"
+            "TG_BOT_TOKEN\n\n"
+            "Пример для Render/Railway: создайте переменную BOT_TOKEN и вставьте туда токен от @BotFather."
         )
         sys.exit(1)
 
-def main() -> None:
-    validate_token(BOT_TOKEN)
+    if ":" not in token:
+        print(
+            "ОШИБКА: токен выглядит некорректно.\n"
+            "Проверьте, что вы вставили полный токен от @BotFather, например:\n"
+            "123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        )
+        sys.exit(1)
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(token).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_comment))
 
     print("Бот запущен")
