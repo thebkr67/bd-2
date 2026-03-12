@@ -1,91 +1,38 @@
 import logging
-from aiogram import Bot, Dispatcher, types
-from dotenv import load_dotenv
-import os
-import sys
-import openai
+from telegram import Update
+from telegram.ext import Application, MessageHandler, ContextTypes, filters
 
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# вставьте токен вашего бота от @BotFather
+BOT_TOKEN = "PASTE_YOUR_BOT_TOKEN_HERE"
 
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
-class Reference:
-    '''
-    A class to store previously response from the chatGPT APi
-    '''
-    def __init__(self) -> None:
-        self.response = ""
+async def handle_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
 
-def clear_past():
-    """
-    A function to clear the previous conversation and context.
-    """
-    reference.response = ""
+    if not message or not message.text:
+        return
 
-reference=Reference()
-model_name = "gpt-3.5-turbo"
+    # реагируем только на "+"
+    if message.text.strip() != "+":
+        return
 
+    # проверяем что это комментарий к посту канала
+    if message.reply_to_message and message.reply_to_message.sender_chat:
+        await message.reply_text("принято")
 
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
 
-# Initialize bot and dispatcher
-bot = Bot(token= TELEGRAM_BOT_TOKEN)
-dp = Dispatcher(bot)
-
-
-
-@dp.message_handler(commands=['start'])
-async def welcome(message: types.Message):
-    """
-    This handler receives messages with `/start` command
-    """
-    await message.reply(f"Hi\nI am here to help you.\nCreated by Asit")
-
-
-@dp.message_handler(commands=['help'])
-async def helper(message: types.Message):
-    """
-    This handler receives messages with `/start` command
-    """
-    help_command = """
-    Hi There, I'm ChatBot created by Asit. please follow these commands -
-    /start - to start the conversation.
-    /clear - to clear the past conversation and context.
-    /help - to get this help menu.
-
-    I hope this helps. :)
-"""
-    await message.reply(help_command)
-
-
-@dp.message_handler(commands=['clear'])
-async def clear(message: types.Message):
-    """
-    This handler to clear the previous conversation and context.
-    """
-    clear_past()
-    await message.reply(f"I've cleared the past conversation and context")
-
-
-@dp.message_handler()
-async def chatGPT(message: types.Message):
-    """
-    This handler to process the user's input and generate a response using the chatGPT API.
-    """
-    print(f">>> USER : \n\t{message.text}")
-    response = openai.chat.completions.create(
-        model = model_name,
-        messages = [
-            {"role": "assistant", "content":f"you are a romantic boy (the response most be human mostly like a indian boy) flirt with the user in her each and every message: {reference.response} "},
-            {"role": "user","content":message.text}
-        ]
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_comment)
     )
-    reference.response = response.choices[0].message.content
-    print(f">>> ChatGPT: \n\t{reference.response}")
-    await bot.send_message(chat_id=message.chat.id, text=reference.response)
 
-async def main():
-    await dp.start_polling(bot)
+    print("Бот запущен")
+    app.run_polling()
 
-if __name__ == '__main__':
-    asyncio.run(main())
+if __name__ == "__main__":
+    main()

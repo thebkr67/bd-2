@@ -1,3 +1,1 @@
-aiogram
-openai==0.28
-python-dotenv
+python-telegram-bot==21.0
