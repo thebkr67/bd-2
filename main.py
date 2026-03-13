@@ -1,4 +1,3 @@
-
 import logging
 import os
 import re
@@ -14,14 +13,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
-REPLY_TEXT = """Одобрено WB:
-1. Введите фразу: Classmark
-2. Оформляйте заказ (сверьте артикул и магазин)
-3. Прикрепите скриншот заказа с датой доставки и ПВЗ
-4. Забрать товар необходимо в день прихода на ПВЗ
-5. Присылайте скрины и данные в директ
-6. Выплата кэшбэка в течение 7 дней"""
-
 DM_REPLY = "@anastasia1732"
 
 DB_PATH = Path("bot_state.sqlite3")
@@ -33,147 +24,209 @@ DM_PATTERNS = [
     r"личные",
     r"напишите\s*в\s*личку",
     r"подскажите",
+    r"подскажи",
     r"расскажите",
+    r"расскажи",
     r"уточните",
+    r"уточни",
+    r"скажите",
+    r"скажи",
     r"не\s*находит",
     r"не\s*могу\s*найти",
+    r"где\s*найти",
 ]
 
+CANCEL_PATTERNS = [
+    r"отмена",
+    r"отказ",
+    r"передумал",
+    r"передумала",
+    r"не\s*буду",
+]
+
+HASHTAG_RE = re.compile(r"#([^\s#]+)")
+
 def get_bot_token():
-    for name in ("BOT_TOKEN","TELEGRAM_BOT_TOKEN","TOKEN","TG_BOT_TOKEN"):
-        value=os.getenv(name,"").strip()
+    for name in ("BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "TOKEN", "TG_BOT_TOKEN"):
+        value = os.getenv(name, "").strip()
         if value:
             return value
     return ""
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS approved_users (
-            chat_id INTEGER,
-            root_message_id INTEGER,
-            user_id INTEGER,
-            PRIMARY KEY(chat_id, root_message_id, user_id)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS approved_users (
+                chat_id INTEGER,
+                root_message_id INTEGER,
+                user_id INTEGER,
+                PRIMARY KEY(chat_id, root_message_id, user_id)
+            )
+            """
         )
-        """)
         conn.commit()
 
 def extract_slots_limit(text):
     if not text:
         return None
-    m=SLOTS_RE.search(text)
+    m = SLOTS_RE.search(text)
     return int(m.group(1)) if m else None
 
 def get_post_text(reply):
-    parts=[]
-    if getattr(reply,"text",None):
+    parts = []
+    if getattr(reply, "text", None):
         parts.append(reply.text)
-    if getattr(reply,"caption",None):
+    if getattr(reply, "caption", None):
         parts.append(reply.caption)
     return "\n".join(parts)
 
 def should_tag_manager(text):
     if not text:
         return False
-
-    text=text.lower()
-
+    text = text.lower()
     if "?" in text:
         return True
-
     for p in DM_PATTERNS:
-        if re.search(p,text):
+        if re.search(p, text):
             return True
-
     return False
 
-def is_user_approved(chat_id,root_id,user_id):
+def is_cancel_message(text):
+    if not text:
+        return False
+    text = text.lower()
+    for p in CANCEL_PATTERNS:
+        if re.search(p, text):
+            return True
+    return False
+
+def extract_second_hashtag_phrase(post_text):
+    if not post_text:
+        return ""
+    hashtags = HASHTAG_RE.findall(post_text)
+    if len(hashtags) < 2:
+        return ""
+    return hashtags[1].replace("_", " ").strip()
+
+def build_reply_text(post_text):
+    phrase = extract_second_hashtag_phrase(post_text)
+    if not phrase:
+        phrase = "товар"
+    return (
+        "Одобрено WB:\n"
+        f"1. Введите фразу: {phrase}\n"
+        "2. Оформляйте заказ (сверьте артикул и магазин)\n"
+        "3. Прикрепите скриншот заказа с датой доставки и ПВЗ\n"
+        "4. Забрать товар необходимо в день прихода на ПВЗ\n"
+        "5. Присылайте скрины и данные в директ\n"
+        "6. Выплата кэшбэка в течение 7 дней"
+    )
+
+def is_user_approved(chat_id, root_id, user_id):
     with sqlite3.connect(DB_PATH) as conn:
-        row=conn.execute(
-        "SELECT 1 FROM approved_users WHERE chat_id=? AND root_message_id=? AND user_id=?",
-        (chat_id,root_id,user_id)).fetchone()
+        row = conn.execute(
+            "SELECT 1 FROM approved_users WHERE chat_id=? AND root_message_id=? AND user_id=?",
+            (chat_id, root_id, user_id)
+        ).fetchone()
     return row is not None
 
-def approved_count(chat_id,root_id):
+def approved_count(chat_id, root_id):
     with sqlite3.connect(DB_PATH) as conn:
-        row=conn.execute(
-        "SELECT COUNT(*) FROM approved_users WHERE chat_id=? AND root_message_id=?",
-        (chat_id,root_id)).fetchone()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM approved_users WHERE chat_id=? AND root_message_id=?",
+            (chat_id, root_id)
+        ).fetchone()
     return row[0] if row else 0
 
-def add_user(chat_id,root_id,user_id):
+def add_user(chat_id, root_id, user_id):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-        "INSERT OR IGNORE INTO approved_users VALUES (?,?,?)",
-        (chat_id,root_id,user_id))
+            "INSERT OR IGNORE INTO approved_users VALUES (?, ?, ?)",
+            (chat_id, root_id, user_id)
+        )
         conn.commit()
 
-async def handle_comment(update:Update,context:ContextTypes.DEFAULT_TYPE):
+def remove_user(chat_id, root_id, user_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "DELETE FROM approved_users WHERE chat_id=? AND root_message_id=? AND user_id=?",
+            (chat_id, root_id, user_id)
+        )
+        changes = conn.total_changes
+        conn.commit()
+    return changes > 0
 
-    message=update.effective_message
+async def handle_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
     if not message or not message.text or not message.from_user:
         return
 
-    text=message.text
+    text = message.text
+    reply_to = message.reply_to_message
 
-    # тег менеджера
+    # Логика комментариев к постам
+    if reply_to and reply_to.sender_chat:
+        chat_id = message.chat_id
+        root_id = reply_to.message_id
+        user_id = message.from_user.id
+
+        # Если пользователь отменил участие — освобождаем место
+        if is_cancel_message(text):
+            removed = remove_user(chat_id, root_id, user_id)
+            if removed:
+                await message.reply_text("Место освобождено.")
+            return
+
+    # Тег менеджера
     if should_tag_manager(text):
         await message.reply_text(DM_REPLY)
         return
 
-    reply_to=message.reply_to_message
-
-    if not(reply_to and reply_to.sender_chat):
+    # Дальше работаем только с комментариями к постам канала
+    if not (reply_to and reply_to.sender_chat):
         return
 
-    post_text=get_post_text(reply_to)
-    limit=extract_slots_limit(post_text)
-
+    post_text = get_post_text(reply_to)
+    limit = extract_slots_limit(post_text)
     if limit is None:
         return
 
-    chat_id=message.chat_id
-    root_id=reply_to.message_id
-    user_id=message.from_user.id
+    chat_id = message.chat_id
+    root_id = reply_to.message_id
+    user_id = message.from_user.id
 
-    # если пользователь уже занял место — ничего не отвечаем
-    if is_user_approved(chat_id,root_id,user_id):
+    if is_user_approved(chat_id, root_id, user_id):
         return
 
-    count=approved_count(chat_id,root_id)
-
-    if count>=limit:
+    count = approved_count(chat_id, root_id)
+    if count >= limit:
         await message.reply_text("Набор закрыт.")
         return
 
-    add_user(chat_id,root_id,user_id)
+    add_user(chat_id, root_id, user_id)
 
-    place=count+1
+    place = count + 1
+    reply_text = build_reply_text(post_text)
 
-    await message.reply_text(f"Место {place}/{limit} занято.\n\n{REPLY_TEXT}")
+    await message.reply_text(f"Место {place}/{limit} занято.\n\n{reply_text}")
 
-    if place>=limit:
+    if place >= limit:
         await message.reply_text("Набор закрыт.")
 
 def main():
-
-    token=get_bot_token()
-
+    token = get_bot_token()
     if not token:
         print("Не найден BOT_TOKEN")
         sys.exit(1)
 
     init_db()
 
-    app=Application.builder().token(token).build()
-
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND,handle_comment)
-    )
+    app = Application.builder().token(token).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_comment))
 
     print("Бот запущен")
-
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
