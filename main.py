@@ -27,7 +27,6 @@ DM_REPLY = "@anastasia1732"
 DB_PATH = Path("bot_state.sqlite3")
 SLOTS_RE = re.compile(r"МЕСТ\s*[:\-]?\s*(\d+)", re.IGNORECASE)
 
-# фразы для тегания менеджера
 DM_PATTERNS = [
     r"в\s*личку",
     r"\bлс\b",
@@ -76,6 +75,7 @@ def get_post_text(reply):
 def should_tag_manager(text):
     if not text:
         return False
+
     text=text.lower()
 
     if "?" in text:
@@ -84,6 +84,7 @@ def should_tag_manager(text):
     for p in DM_PATTERNS:
         if re.search(p,text):
             return True
+
     return False
 
 def is_user_approved(chat_id,root_id,user_id):
@@ -115,7 +116,7 @@ async def handle_comment(update:Update,context:ContextTypes.DEFAULT_TYPE):
 
     text=message.text
 
-    # триггер для тегания менеджера
+    # тег менеджера
     if should_tag_manager(text):
         await message.reply_text(DM_REPLY)
         return
@@ -135,8 +136,8 @@ async def handle_comment(update:Update,context:ContextTypes.DEFAULT_TYPE):
     root_id=reply_to.message_id
     user_id=message.from_user.id
 
+    # если пользователь уже занял место — ничего не отвечаем
     if is_user_approved(chat_id,root_id,user_id):
-        await message.reply_text("Вы уже заняли место под этим постом.")
         return
 
     count=approved_count(chat_id,root_id)
