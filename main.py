@@ -142,7 +142,7 @@ async def handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await m.reply_text(
         f"Занято: {add}. Всего у вас: {cur+add}. {taken+add}/{limit}\n\n"
-        f"1. Введите фразу: {phrase}"
+        f"1. Введите фразу: {phrase}\n"
         "2. Оформляйте заказ (сверьте артикул и магазин)\n"
         "3. Прикрепите скриншот заказа с датой доставки и ПВЗ\n"
         "4. Забрать товар необходимо в день прихода на ПВЗ\n"
