@@ -35,14 +35,28 @@ CANCEL_PATTERNS = [
     r"передумал",
     r"передумала",
     r"не\s*буду",
+    r"отменить",
 ]
 
-QUANTITY_PATTERNS = [
+# для брони
+BOOK_QUANTITY_PATTERNS = [
     r"\b(\d+)\s*\+",
     r"\b(\d+)\s*акк",
     r"\b(\d+)\s*аккаунт",
     r"\b(\d+)\s*мест",
-    r"\b(\d+)\s*(?:отмена|отказ|передумал|передумала|не\s*буду)",
+]
+
+# для отмены: понимаем и из контекста, и короткие формы -2, -3
+CANCEL_QUANTITY_PATTERNS = [
+    r"-(\d+)\b",
+    r"\b(\d+)\s*мест",
+    r"\b(\d+)\s*акк",
+    r"\b(\d+)\s*аккаунт",
+    r"\b(\d+)\s*(?:отмена|отказ|передумал|передумала|не\s*буду|отменить)\b",
+    r"(?:отмена|отказ|передумал|передумала|не\s*буду|отменить)\s*(\d+)\b",
+    r"\bубери\s*(\d+)\b",
+    r"\bсними\s*(\d+)\b",
+    r"\bминус\s*(\d+)\b",
     r"\b(\d+)\b",
 ]
 
@@ -59,16 +73,26 @@ def init_db():
         )
         conn.commit()
 
-def extract_quantity(text):
+def extract_book_quantity(text):
     text = (text or "").lower()
-    for pattern in QUANTITY_PATTERNS:
+    for pattern in BOOK_QUANTITY_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            return max(1, int(m.group(1)))
+    return 1
+
+def extract_cancel_quantity(text):
+    text = (text or "").lower()
+    for pattern in CANCEL_QUANTITY_PATTERNS:
         m = re.search(pattern, text)
         if m:
             return max(1, int(m.group(1)))
     return 1
 
 def is_cancel(text):
-    text = (text or "").lower()
+    text = (text or "").lower().strip()
+    if re.fullmatch(r"-\d+", text):
+        return True
     return any(re.search(pattern, text) for pattern in CANCEL_PATTERNS)
 
 def should_tag(message):
@@ -153,9 +177,9 @@ async def handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     current_user_seats = get_user(chat, root, user)
 
-    # Отмена работает после уже существующей брони
+    # Отмена понимается из контекста: "отменить 2 места", "можно отменить 2 места", "-2"
     if is_cancel(text):
-        qty = extract_quantity(text)
+        qty = extract_cancel_quantity(text)
         removed = min(current_user_seats, qty)
         set_user(chat, root, user, current_user_seats - removed)
         if removed:
@@ -166,11 +190,11 @@ async def handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not limit:
         return
 
-    # Если пользователь уже бронировал под этим постом, новые сообщения не учитываем
+    # после первой брони повторные сообщения игнорируем
     if current_user_seats > 0:
         return
 
-    qty = extract_quantity(text)
+    qty = extract_book_quantity(text)
     taken = get_taken(chat, root)
     free = limit - taken
 
