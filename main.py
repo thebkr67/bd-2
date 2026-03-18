@@ -8,10 +8,7 @@ from pathlib import Path
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(level=logging.INFO)
 
 DM_REPLY = "@anastasia1732"
 
@@ -20,259 +17,143 @@ SLOTS_RE = re.compile(r"МЕСТ\s*[:\-]?\s*(\d+)", re.IGNORECASE)
 HASHTAG_RE = re.compile(r"#([^\s#]+)")
 
 DM_PATTERNS = [
-    r"в\s*личку",
-    r"\bлс\b",
-    r"личные",
-    r"напишите\s*в\s*личку",
-    r"подскажите",
-    r"подскажи",
-    r"расскажите",
-    r"расскажи",
-    r"уточните",
-    r"уточни",
-    r"скажите",
-    r"скажи",
-    r"не\s*находит",
-    r"не\s*могу\s*найти",
-    r"где\s*найти",
+    r"в\s*личку", r"\bлс\b", r"подскаж", r"расскаж", r"уточн",
+    r"скажи", r"скажите", r"не\s*находит", r"не\s*могу\s*найти", r"где\s*найти"
 ]
 
 CANCEL_PATTERNS = [
-    r"отмена",
-    r"отказ",
-    r"передумал",
-    r"передумала",
-    r"не\s*буду",
+    r"отмена", r"отказ", r"передумал", r"передумала", r"не\s*буду"
 ]
 
 QUANTITY_PATTERNS = [
     r"\b(\d+)\s*\+",
-    r"\b(\d+)\s*акк(?:а|ов)?\b",
-    r"\b(\d+)\s*аккаунт(?:а|ов)?\b",
-    r"\b(\d+)\s*мест(?:а)?\b",
-    r"\b(\d+)\s*чел(?:овек)?\b",
+    r"\b(\d+)\s*акк",
+    r"\b(\d+)\s*аккаунт",
+    r"\b(\d+)\s*мест",
+    r"\b(\d+)\s*(?:отмена|отказ|передумал|передумала|не\s*буду)",
+    r"\b(\d+)\b",
 ]
-
-def get_bot_token():
-    for name in ("BOT_TOKEN", "TELEGRAM_BOT_TOKEN", "TOKEN", "TG_BOT_TOKEN"):
-        value = os.getenv(name, "").strip()
-        if value:
-            return value
-    return ""
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS reservations (
-                chat_id INTEGER NOT NULL,
-                root_message_id INTEGER NOT NULL,
-                user_id INTEGER NOT NULL,
-                seats INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (chat_id, root_message_id, user_id)
-            )
-            """
-        )
+        conn.execute("""CREATE TABLE IF NOT EXISTS reservations (
+            chat_id INTEGER,
+            root_id INTEGER,
+            user_id INTEGER,
+            seats INTEGER,
+            PRIMARY KEY(chat_id, root_id, user_id)
+        )""")
         conn.commit()
 
-def get_message_text(message):
-    parts = []
-    if getattr(message, "text", None):
-        parts.append(message.text)
-    if getattr(message, "caption", None):
-        parts.append(message.caption)
-    return "\n".join(parts).strip()
+def extract_quantity(text):
+    text = text.lower()
+    for p in QUANTITY_PATTERNS:
+        m = re.search(p, text)
+        if m:
+            return max(1, int(m.group(1)))
+    return 1
 
-def extract_slots_limit(text):
-    if not text:
-        return None
+def is_cancel(text):
+    text = text.lower()
+    return any(re.search(p, text) for p in CANCEL_PATTERNS)
+
+def should_tag(message):
+    text = (message.text or "").lower()
+    if message.photo or message.document:
+        return True
+    if "?" in text:
+        return True
+    return any(re.search(p, text) for p in DM_PATTERNS)
+
+def get_post_text(msg):
+    return (msg.text or "") + (msg.caption or "")
+
+def extract_limit(text):
     m = SLOTS_RE.search(text)
     return int(m.group(1)) if m else None
 
-def should_tag_manager(message):
-    text = get_message_text(message).lower()
-
-    if getattr(message, "photo", None) or getattr(message, "document", None):
-        return True
-
-    if "?" in text:
-        return True
-
-    for pattern in DM_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-    return False
-
-def is_cancel_message(text):
-    if not text:
-        return False
-    text = text.lower()
-    return any(re.search(p, text, re.IGNORECASE) for p in CANCEL_PATTERNS)
-
-def extract_quantity(text):
-    if not text:
-        return 1
-
-    text = text.lower()
-    for pattern in QUANTITY_PATTERNS:
-        m = re.search(pattern, text, re.IGNORECASE)
-        if m:
-            qty = int(m.group(1))
-            return max(1, qty)
-
-    return 1
-
-def extract_second_hashtag_phrase(post_text):
-    if not post_text:
-        return ""
-    hashtags = HASHTAG_RE.findall(post_text)
-    if len(hashtags) < 2:
-        return ""
-    return hashtags[1].replace("_", " ").strip()
-
-def build_reply_text(post_text):
-    phrase = extract_second_hashtag_phrase(post_text)
-    if not phrase:
-        phrase = "товар"
-    return (
-        "Одобрено WB:\n"
-        f"1. Введите фразу: {phrase}\n"
-        "2. Оформляйте заказ (сверьте артикул и магазин)\n"
-        "3. Прикрепите скриншот заказа с датой доставки и ПВЗ\n"
-        "4. Забрать товар необходимо в день прихода на ПВЗ\n"
-        "5. Присылайте скрины и данные в директ\n"
-        "6. Выплата кэшбэка в течение 7 дней"
-    )
-
-def get_user_seats(chat_id, root_id, user_id):
+def get_taken(chat, root):
     with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute(
-            "SELECT seats FROM reservations WHERE chat_id=? AND root_message_id=? AND user_id=?",
-            (chat_id, root_id, user_id),
-        ).fetchone()
-    return int(row[0]) if row else 0
+        r = conn.execute("SELECT COALESCE(SUM(seats),0) FROM reservations WHERE chat_id=? AND root_id=?", (chat, root)).fetchone()
+    return r[0]
 
-def get_taken_seats(chat_id, root_id):
+def get_user(chat, root, user):
     with sqlite3.connect(DB_PATH) as conn:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(seats), 0) FROM reservations WHERE chat_id=? AND root_message_id=?",
-            (chat_id, root_id),
-        ).fetchone()
-    return int(row[0]) if row else 0
+        r = conn.execute("SELECT seats FROM reservations WHERE chat_id=? AND root_id=? AND user_id=?", (chat, root, user)).fetchone()
+    return r[0] if r else 0
 
-def add_user_seats(chat_id, root_id, user_id, seats_to_add):
-    current = get_user_seats(chat_id, root_id, user_id)
-    new_value = current + seats_to_add
+def set_user(chat, root, user, seats):
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            INSERT INTO reservations (chat_id, root_message_id, user_id, seats)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(chat_id, root_message_id, user_id)
-            DO UPDATE SET seats=excluded.seats
-            """,
-            (chat_id, root_id, user_id, new_value),
-        )
-        conn.commit()
-    return new_value
-
-def remove_user_seats(chat_id, root_id, user_id, seats_to_remove):
-    current = get_user_seats(chat_id, root_id, user_id)
-    if current <= 0:
-        return 0, 0
-
-    removed = min(current, seats_to_remove)
-    left = current - removed
-
-    with sqlite3.connect(DB_PATH) as conn:
-        if left > 0:
-            conn.execute(
-                "UPDATE reservations SET seats=? WHERE chat_id=? AND root_message_id=? AND user_id=?",
-                (left, chat_id, root_id, user_id),
-            )
+        if seats > 0:
+            conn.execute("INSERT OR REPLACE INTO reservations VALUES (?,?,?,?)", (chat, root, user, seats))
         else:
-            conn.execute(
-                "DELETE FROM reservations WHERE chat_id=? AND root_message_id=? AND user_id=?",
-                (chat_id, root_id, user_id),
-            )
+            conn.execute("DELETE FROM reservations WHERE chat_id=? AND root_id=? AND user_id=?", (chat, root, user))
         conn.commit()
 
-    return removed, left
+def extract_phrase(text):
+    tags = HASHTAG_RE.findall(text)
+    if len(tags) >= 2:
+        return tags[1].replace("_"," ")
+    return "товар"
 
-async def handle_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
-    if not message or not message.from_user:
+async def handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    m = update.effective_message
+    if not m or not m.from_user:
         return
 
-    text = get_message_text(message)
-    reply_to = message.reply_to_message
-
-    if reply_to and reply_to.sender_chat:
-        chat_id = message.chat_id
-        root_id = reply_to.message_id
-        user_id = message.from_user.id
-
-        if is_cancel_message(text):
-            qty = extract_quantity(text)
-            removed, left = remove_user_seats(chat_id, root_id, user_id, qty)
-            if removed > 0:
-                await message.reply_text(f"Освобождено мест: {removed}. Осталось у вас: {left}.")
-            return
-
-    if should_tag_manager(message):
-        await message.reply_text(DM_REPLY)
+    if should_tag(m):
+        await m.reply_text(DM_REPLY)
         return
 
-    if not (reply_to and reply_to.sender_chat):
+    if not (m.reply_to_message and m.reply_to_message.sender_chat):
         return
 
-    post_text = get_message_text(reply_to)
-    limit = extract_slots_limit(post_text)
-    if limit is None:
+    chat = m.chat_id
+    root = m.reply_to_message.message_id
+    user = m.from_user.id
+    text = (m.text or "")
+
+    if is_cancel(text):
+        qty = extract_quantity(text)
+        cur = get_user(chat, root, user)
+        removed = min(cur, qty)
+        set_user(chat, root, user, cur - removed)
+        if removed:
+            await m.reply_text(f"Освобождено мест: {removed}")
         return
 
-    chat_id = message.chat_id
-    root_id = reply_to.message_id
-    user_id = message.from_user.id
+    limit = extract_limit(get_post_text(m.reply_to_message))
+    if not limit:
+        return
 
     qty = extract_quantity(text)
-    taken = get_taken_seats(chat_id, root_id)
-    free = max(0, limit - taken)
+    taken = get_taken(chat, root)
+    free = limit - taken
 
     if free <= 0:
-        await message.reply_text("Набор закрыт.")
+        await m.reply_text("Набор закрыт")
         return
 
-    reserve_qty = min(qty, free)
-    new_user_total = add_user_seats(chat_id, root_id, user_id, reserve_qty)
-    total_taken = get_taken_seats(chat_id, root_id)
+    add = min(qty, free)
+    cur = get_user(chat, root, user)
+    set_user(chat, root, user, cur + add)
 
-    reply_text = build_reply_text(post_text)
+    phrase = extract_phrase(get_post_text(m.reply_to_message))
 
-    await message.reply_text(
-        f"Занято мест: {reserve_qty}. Всего у вас под этим постом: {new_user_total}. "
-        f"Итого занято: {total_taken}/{limit}.\n\n{reply_text}"
+    await m.reply_text(
+        f"Занято: {add}. Всего у вас: {cur+add}. {taken+add}/{limit}\n\n"
+        f"Введите фразу: {phrase}"
     )
 
-    if reserve_qty < qty:
-        await message.reply_text(f"Свободных мест было меньше, чем запрошено. Добавлено только {reserve_qty}.")
-
-    if total_taken >= limit:
-        await message.reply_text("Набор закрыт.")
-
 def main():
-    token = get_bot_token()
+    token = os.getenv("BOT_TOKEN")
     if not token:
-        print("Не найден BOT_TOKEN")
-        sys.exit(1)
+        print("NO TOKEN"); sys.exit(1)
 
     init_db()
-
     app = Application.builder().token(token).build()
-    app.add_handler(MessageHandler(~filters.COMMAND, handle_comment))
-
-    print("Бот запущен")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.add_handler(MessageHandler(~filters.COMMAND, handle))
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
